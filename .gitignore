@@ -1,0 +1,14 @@
+# cs session files
+.cs/
+CLAUDE.local.md
+.claude/settings.local.json
+
+# Python / Jupyter
+.venv/
+__pycache__/
+.ipynb_checkpoints/
+
+# OS and editor files
+.DS_Store
+.vscode/
+.idea/
