@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "name": "Import format example (synthetic)",
+  "model": "Synthetic three-layer model",
+  "task": "Format example",
+  "split": "synthetic",
+  "kind": "layer",
+  "metric": "cosine",
+  "pooling": "masked_mean",
+  "sample_count": 3,
+  "seed": 42,
+  "max_tokens": 256,
+  "accuracy": null,
+  "chance_accuracy": null,
+  "labels": ["L0", "L1", "L2"],
+  "matrix": [[1, 0.4, 0.2], [0.4, 1, 0.8], [0.2, 0.8, 1]],
+  "notes": "Synthetic example for the import format. Replace with your computed matrix and metadata.",
+  "provenance": "Invented example values, with no experimental results."
+}

@@ -1,0 +1,7 @@
+**
+!Dockerfile
+!server.py
+!static/
+!static/**
+!examples/
+!examples/example.json

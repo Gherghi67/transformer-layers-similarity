@@ -1,0 +1,21 @@
+import assert from 'node:assert/strict';
+import {compareMaps, demoMaps} from '../static/math.mjs';
+
+const base = {kind: 'layer', metric: 'cosine', labels: ['L0', 'L1', 'L2'], matrix: [[1, .1, .2], [.1, 1, .3], [.2, .3, 1]]};
+const reverse = {...base, matrix: [[1, .3, .2], [.3, 1, .1], [.2, .1, 1]]};
+const same = compareMaps(base, base);
+assert.equal(same.correlation, 1);
+assert.equal(same.pairs, 3);
+assert.deepEqual(same.difference, [[0, 0, 0], [0, 0, 0], [0, 0, 0]]);
+assert.ok(Math.abs(compareMaps(base, reverse).correlation + 1) < 1e-12);
+assert.ok(Math.abs(compareMaps(base, reverse).difference[0][1] + .2) < 1e-12);
+const constant = {...base, matrix: [[1, .1, .1], [.1, 1, .1], [.1, .1, 1]]};
+assert.equal(compareMaps(constant, base).correlation, null);
+assert.equal(compareMaps(constant, constant).correlation, null);
+assert.equal(compareMaps(base, {...base, metric: 'linear_cka'}).difference, null);
+assert.equal(compareMaps(base, {...base, labels: ['L1', 'L0', 'L2']}).compatible, false);
+assert.equal(compareMaps(base, {...base, kind: 'head'}).compatible, false);
+assert.equal(compareMaps({...base, labels: ['L0', 'L1'], matrix: [[1, .5], [.5, 1]]}, {...base, labels: ['L0', 'L1'], matrix: [[1, .6], [.6, 1]]}).correlation, null);
+assert.ok(demoMaps().every(run => run.demo));
+assert.deepEqual(demoMaps(), demoMaps());
+console.log('Numerical comparisons and synthetic fixtures passed.');
