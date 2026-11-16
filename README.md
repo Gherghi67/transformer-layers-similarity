@@ -51,6 +51,20 @@ The base paper's benchmarks, all public on Hugging Face. The decoder maps only n
 
 The decoder models are Pythia, Qwen2.5, Gemma 3 and Qwen3.5.
 
+### Loading the data
+
+`benchmarks/` loads each benchmark and the fixed sample we all use: 500 examples per task (seed 0), or the whole split when it is smaller (MRPC 408, RTE 277, WNLI 71). `benchmarks/samples.json` only stores the chosen row numbers; the text comes from Hugging Face.
+
+```python
+from benchmarks import load_sample, load_all
+arc = load_sample("arc_challenge")   # the fixed 500
+lambada = load_all("lambada")[:100]  # the paper's first 100 passages (Fig. 14)
+```
+
+- Decoder tasks (`gsm8k`, `arc_challenge`, `hellaswag`, `winogrande`, `lambada`): each example has `prompt`, the text the model reads, and `answer`; multiple-choice tasks also have `choices` and `label`. Prompts follow lm-eval-harness, which the base paper used, and match it on all 2,000 sampled GSM8K, ARC, HellaSwag and LAMBADA examples. WinoGrande's prompt keeps the blank (`_`) instead of filling it with each option; its choices and labels match lm-eval.
+- GLUE tasks (`cola`, `mrpc`, `qnli`, `rte`, `sst2`, `stsb`, `wnli`): `text_a`, `text_b` (None for CoLA and SST-2) and `label`.
+- Needs a recent `datasets` (`pip install -U datasets`; tested with 5.2). Tests: `python -m unittest benchmarks.test_loaders`.
+
 ## Method
 
 All runs are on Google Colab with one 12 GB GPU, so smaller models stand in for Llama2. The only training is BERT fine-tuning.
@@ -134,7 +148,7 @@ We do these as a team, with no fixed owners.
 
 Setup (20–24 Nov)
 - [ ] 1. Colab notebook in this repo; load Pythia-410M and collect every layer's hidden states (21 Nov)
-- [ ] 2. Loaders for GSM8K, ARC-Challenge, HellaSwag, WinoGrande, LAMBADA and GLUE; a fixed sample of 300–500 per task (22 Nov)
+- [x] 2. Loaders for GSM8K, ARC-Challenge, HellaSwag, WinoGrande, LAMBADA and GLUE; a fixed sample of 300–500 per task (22 Nov)
 - [ ] 3. Fit check on the 12 GB GPU: Qwen2.5-1.5B, Gemma 3 1B, Qwen3.5-0.8B, ModernBERT (Falcon-H1-0.5B optional) (22 Nov)
 - [ ] 4. Reproduce Fig. 14: Pythia-410M cosine map on LAMBADA (24 Nov)
 - [ ] 5. EDA: token lengths per task, share truncated, GLUE class balance (24 Nov)
