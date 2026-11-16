@@ -15,13 +15,11 @@
       <button class="nav-button active" data-view="maps" aria-pressed="true">Maps</button>
       <button class="nav-button" data-view="compare" aria-pressed="false">Compare</button>
       <button class="nav-button" data-view="tasks" aria-pressed="false">Team tasks</button>
-      <button class="nav-button" data-view="activity" aria-pressed="false">Activity</button>
     </nav>
     <a class="repo-link" href="https://github.com/Gherghi67/transformer-layers-similarity" target="_blank" rel="noreferrer">Project ↗</a>
   </header>
   <main>
     <div class="heading-row"><div><p class="eyebrow">Transformer layers &amp; attention-head similarity</p><h1 id="view-title">Explore representations</h1></div><div class="actions"><button id="demo-toggle" class="secondary">Explore demo maps</button><button id="import-button">Import result</button><input id="import-file" type="file" accept=".json,application/json" hidden></div></div>
-    <form id="identity-form" class="identity-bar"><span id="identity-label">Identifying visitor…</span><label for="visitor-name">Your name for local activity</label><input id="visitor-name" maxlength="80" placeholder="Your name" required><button class="secondary" type="submit">Set name</button></form>
     <div id="message" class="message" role="status" hidden></div>
     <div id="demo-banner" class="demo-banner" hidden><strong>Synthetic demo</strong><span>Invented maps for exploring the workbench. Your imported results are stored separately.</span></div>
     <section id="maps-view" aria-label="Map explorer">
@@ -43,9 +41,6 @@
     <section id="tasks-view" aria-label="Team tasks" hidden>
       <div class="task-intro panel"><div><p class="eyebrow">Progress report 1</p><h2>03 Dec 2026 · 10:00</h2><p>Europe/Bucharest. Team plan from the project README.</p></div><div class="task-progress"><strong id="task-progress">0 / 12</strong><span>tasks complete</span><progress id="progress" max="12" value="0"></progress></div></div>
       <div id="tasks" class="panel task-list"></div>
-    </section>
-    <section id="activity-view" aria-label="Activity history" hidden>
-      <div class="panel activity-panel"><div class="panel-heading"><h2>Team activity</h2><button id="refresh-activity" class="secondary">Refresh</button></div><p>Newest first · times shown in your timezone. Local names and browser actions are self-reported.</p><div id="activity-list" aria-live="polite"></div><button id="older-activity" class="secondary" hidden>Load older activity</button></div>
     </section>
     <footer>Layer Atlas <span>Results and task progress stay on this host.</span><a href="https://arxiv.org/abs/2407.09298" target="_blank" rel="noreferrer">Transformer Layers as Painters ↗</a></footer>
   </main>

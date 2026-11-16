@@ -2,8 +2,11 @@ import copy
 from contextlib import closing
 import http.client
 import importlib.util
+import io
 import json
 from pathlib import Path
+import subprocess
+import sys
 import tempfile
 import threading
 import unittest
@@ -91,10 +94,17 @@ class WorkbenchTests(unittest.TestCase):
             self.assertEqual(self.request("GET", path)[0], 404)
         self.assertEqual(self.request("GET", "/")[0], 200)
 
-    def test_activity_identity_and_deleted_run_history(self):
-        headers = {"Cookie": "atlas_name=Bogdan", "Tailscale-User-Login": "spoof@example.com"}
-        self.assertEqual(json.loads(self.request("GET", "/api/me", headers=headers)[1]),
-                         {"actor": "Bogdan", "identity_source": "self-reported"})
+    def history(self):
+        with closing(server_module.sqlite3.connect(self.path)) as db:
+            db.row_factory = server_module.sqlite3.Row
+            events = [dict(row) for row in db.execute("SELECT * FROM activity ORDER BY id DESC")]
+        for event in events:
+            event["details"] = json.loads(event["details"])
+        return events
+
+    def test_activity_recorded_server_side_and_kept_after_delete(self):
+        self.server.trust_proxy_identity = True
+        headers = {"Tailscale-User-Login": "teammate@example.com"}
         status, body = self.request("POST", "/api/runs", self.example, headers)
         identifier = json.loads(body)["id"]
         path = f"/api/runs/{identifier}"
@@ -103,41 +113,65 @@ class WorkbenchTests(unittest.TestCase):
         self.request("GET", path + "/matrix.csv", headers=headers)
         self.request("DELETE", path, {}, headers)
         self.request("PATCH", path, {"notes": "missing", "revision": 2}, headers)
-        events = json.loads(self.request("GET", "/api/activity")[1])
+        events = self.history()
         self.assertEqual([e["action"] for e in events],
                          ["request.failed", "run.delete", "run.export", "task.update", "notes.update", "run.import"])
-        self.assertTrue(all(e["actor"] == "Bogdan" for e in events))
-        self.assertTrue(all(e["identity_source"] == "self-reported" for e in events))
+        self.assertTrue(all(e["actor"] == "teammate@example.com" for e in events))
+        self.assertTrue(all(e["identity_source"] == "tailscale" for e in events))
         self.assertNotIn("private note text", json.dumps(events))
         self.assertEqual(events[1]["details"]["name"], self.example["name"])
         self.assertEqual(events[2]["details"]["format"], "matrix.csv")
         self.assertFalse(events[3]["details"]["before"])
         self.assertTrue(events[3]["details"]["done"])
-        older = json.loads(self.request("GET", f'/api/activity?before={events[2]["id"]}')[1])
-        self.assertEqual(older, events[3:])
         server_module.initialize(self.path)
-        with closing(server_module.sqlite3.connect(self.path)) as db:
-            self.assertEqual(db.execute("SELECT count(*) FROM activity").fetchone()[0], 6)
+        self.assertEqual(len(self.history()), 6)
 
-    def test_proxy_identity_and_local_name(self):
+    def test_history_and_name_routes_are_not_served(self):
+        for method, path, payload in [("GET", "/api/activity", None), ("GET", "/api/activity?before=5", None),
+                                      ("GET", "/api/me", None), ("POST", "/api/me", {"name": "Bogdan"})]:
+            with self.subTest(method=method, path=path):
+                connection = http.client.HTTPConnection("127.0.0.1", self.server.server_port)
+                connection.request(method, path, json.dumps(payload) if payload else None, {"Content-Type": "application/json"})
+                response = connection.getresponse()
+                body = response.read()
+                self.assertEqual(response.status, 404)
+                self.assertIsNone(response.getheader("Set-Cookie"))
+                self.assertNotIn(b"actor", body)
+                connection.close()
+        page = self.request("GET", "/")[1].decode()
+        for removed in ('data-view="activity"', "activity-view", "identity-form", "visitor-name"):
+            self.assertNotIn(removed, page)
+
+    def test_identity_header_trust_and_cookie_ignored(self):
+        headers = {"Tailscale-User-Login": "spoof@example.com", "Cookie": "atlas_name=Bogdan"}
+        self.request("PATCH", "/api/tasks/1", {"done": True}, headers)
         self.server.trust_proxy_identity = True
-        headers = {"Tailscale-User-Login": "teammate@example.com", "Cookie": "atlas_name=Other"}
-        identity = json.loads(self.request("GET", "/api/me", headers=headers)[1])
-        self.assertEqual(identity, {"actor": "teammate@example.com", "identity_source": "tailscale"})
-        identity = json.loads(self.request("POST", "/api/me", {"name": "Changed"}, headers)[1])
-        self.assertEqual(identity["actor"], "teammate@example.com")
-        connection = http.client.HTTPConnection("127.0.0.1", self.server.server_port)
-        connection.request("POST", "/api/me", json.dumps({"name": "Bogdan G"}), {"Content-Type": "application/json"})
-        response = connection.getresponse()
-        cookie = response.getheader("Set-Cookie")
-        self.assertIn("HttpOnly", cookie)
-        self.assertIn("SameSite=Strict", cookie)
-        self.assertEqual(json.loads(response.read())["actor"], "Bogdan G")
-        connection.close()
-        identity = json.loads(self.request("GET", "/api/me", headers={"Cookie": cookie.split(";", 1)[0]})[1])
-        self.assertEqual(identity["actor"], "Bogdan G")
-        self.assertEqual(self.request("POST", "/api/me", {"name": "bad\\nname".replace("\\n", "\n")})[0], 400)
-        self.assertEqual(json.loads(self.request("GET", "/api/me")[1])["identity_source"], "unknown")
+        self.request("PATCH", "/api/tasks/1", {"done": False}, headers)
+        self.request("PATCH", "/api/tasks/2", {"done": True}, {"Cookie": "atlas_name=Bogdan"})
+        self.request("PATCH", "/api/tasks/2", {"done": False}, {"Tailscale-User-Login": "bad\x01name"})
+        self.assertEqual([(e["actor"], e["identity_source"]) for e in reversed(self.history())],
+                         [("Unknown visitor", "unknown"), ("spoof@example.com", "tailscale"),
+                          ("Unknown visitor", "unknown"), ("Unknown visitor", "unknown")])
+
+    def test_print_activity_reads_newest_entries_oldest_first(self):
+        self.request("PATCH", "/api/tasks/1", {"done": True})
+        self.request("POST", "/api/activity", {"action": "view.open", "details": {"view": "tasks"}})
+        output = io.StringIO()
+        server_module.print_activity(self.path, 10, output)
+        lines = output.getvalue().splitlines()
+        self.assertEqual(len(lines), 2)
+        self.assertIn("task.update", lines[0])
+        self.assertIn("view.open", lines[1])
+        self.assertIn("Unknown visitor (unknown)", lines[1])
+        output = io.StringIO()
+        server_module.print_activity(self.path, 1, output)
+        self.assertEqual(output.getvalue().splitlines(), lines[1:])
+        script = str(Path(__file__).parents[1] / "server.py")
+        result = subprocess.run([sys.executable, script, "--db", str(self.path), "--activity", "2"], capture_output=True, text=True, timeout=30)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.splitlines(), lines)
+        result = subprocess.run([sys.executable, script, "--db", str(self.path), "--activity", "0"], capture_output=True, text=True, timeout=30)
+        self.assertEqual(result.returncode, 2)
 
     def test_audit_failure_rolls_back_change(self):
         with closing(server_module.sqlite3.connect(self.path)) as db, db:
@@ -152,13 +186,11 @@ class WorkbenchTests(unittest.TestCase):
         record = json.loads(logs.records[0].message)
         self.assertEqual(record["status"], 201)
         self.assertIn("duration_ms", record)
-        events = json.loads(self.request("GET", "/api/activity")[1])
+        events = self.history()
         self.assertTrue(events[0]["details"]["browser_reported"])
         self.assertEqual(events[0]["request_id"], record["request_id"])
         self.assertEqual(self.request("POST", "/api/activity", {"action": "run.delete"})[0], 400)
         self.assertEqual(self.request("POST", "/api/activity", {"action": "png.export", "details": {"x": "a" * 1001}})[0], 400)
-        for query in ("bad", "-1", str(2**70)):
-            self.assertEqual(self.request("GET", "/api/activity?before=" + query)[0], 400)
         self.assertEqual(self.request("POST", "/api/activity", {"action": "view.open"}, {"Origin": "https://bad.example"})[0], 403)
 
     def test_oversized_body_rejected_before_read(self):

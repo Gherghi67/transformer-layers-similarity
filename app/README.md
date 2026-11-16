@@ -34,7 +34,9 @@ Anyone with app access can download all results, import results, edit notes/task
 
 ### Installed service on this Mac
 
-The user LaunchAgent `com.gherghina.layer-atlas` at `~/Library/LaunchAgents/com.gherghina.layer-atlas.plist` now runs `app/manage.py maintain` at login and every five minutes. It starts Docker Desktop if needed, ensures the built containers are running and healthy, and makes one backup per UTC day. Docker also restarts containers after process exits. Keep this Mac logged in and connected to Tailscale. First startup after a full reboot has not been exercised.
+The live deployment runs from `~/Documents/layer-atlas-deploy`, a folder outside every repository assembled from this `app/` folder and the private gateway build. Its `data/` folder holds the backups, network settings and service logs; the paths below that start with `app/` refer to that folder on this Mac.
+
+The user LaunchAgent `com.gherghina.layer-atlas` at `~/Library/LaunchAgents/com.gherghina.layer-atlas.plist` now runs `manage.py maintain` from that folder at login and every five minutes. It starts Docker Desktop if needed, ensures the built containers are running and healthy, and makes one backup per UTC day. Docker also restarts containers after process exits. Keep this Mac logged in and connected to Tailscale. First startup after a full reboot has not been exercised.
 
 The separate `com.gherghina.layer-atlas-awake` LaunchAgent runs `app/awake.py` at login and restarts the watcher if it exits. While both app containers are running, it holds `caffeinate -is -w <watcher PID>`, matching Jobs Manager: idle sleep is prevented on battery or power; the stronger system-sleep assertion applies on power. Display sleep and screen locking remain allowed. Every 30 seconds it checks the containers and releases its assertion if either stops or Docker becomes unavailable. It does not override lid-close sleep, shutdown or loss of power. Plug in the Mac for sustained hosting. Logs are in `app/data/awake.log` and `app/data/awake-error.log`.
 
@@ -138,13 +140,19 @@ docker compose -p layer-atlas-verify -f app/compose.yaml down -v
 
 ## Activity logging
 
-Open **Activity** to see who imported, viewed, downloaded or deleted a result, edited notes, changed a task, compared maps or exported a PNG. Entries include UTC timestamps (displayed in your browser’s timezone), identity source, result/task identifiers and relevant change details. The newest 100 entries load first; **Load older activity** pages backward and **Refresh** fetches new events. Failed requests include their HTTP status. Note contents, matrices, cookies and request bodies are excluded from logs. Notes entries record revision changes and character counts; task entries record the previous and new completion state.
+The server records who imported, viewed, downloaded or deleted a result, edited notes, changed a task, compared maps or exported a PNG. The history stays on the server: the web app has no activity view and no route that returns it. Entries include UTC timestamps, identity source, result/task identifiers and relevant change details. Failed requests include their HTTP status. Note contents, matrices, cookies and request bodies are excluded from logs. Notes entries record revision changes and character counts; task entries record the previous and new completion state.
+
+Read the newest entries on this Mac, oldest first:
+
+```sh
+docker exec layer-atlas-atlas-1 python server.py --db /data/layer-atlas.sqlite3 --activity 50
+```
 
 Activity is stored in the existing SQLite volume and included in database backups. Successful imports, edits and deletions commit together with their activity entry; if recording fails, the change rolls back. Deleting a result preserves its history. There is no app route to delete history. History starts with this update; earlier actions cannot be reconstructed. Database history currently has no automatic expiry.
 
 The Docker app enables `--trust-proxy-identity` for the private gateway: remote requests use the `Tailscale-User-Login` supplied by [Tailscale Serve](https://tailscale.com/docs/features/tailscale-serve#identity-headers). Keep the backend private and the gateway published on loopback. Local processes that can reach the gateway are trusted and can supply these headers; do not put another public proxy in front of it without stripping client identity headers. Direct development servers ignore these headers by default. Tagged devices may have no user identity.
 
-Without a Tailscale identity, use **Your name for local activity**. The name is stored in an HttpOnly, SameSite cookie and explicitly labeled **self-reported**, not authenticated. Visitors without either identity appear as **Unknown visitor**. Browser actions (view navigation, comparisons and PNG exports) are also self-reported, while imports, note edits, task changes, JSON/CSV downloads and deletions are recorded by the server. Browser telemetry does not confirm that a download was saved to disk. Everyone with app access can read history, including teammates’ Tailscale login names. This adds attribution, not authorization or tamper resistance against host/database administrators.
+Requests without a Tailscale identity, such as local visits on this Mac, are recorded as **Unknown visitor**. Browser actions (view navigation, comparisons, demo changes and PNG exports) are reported by the browser, while imports, note edits, task changes, JSON/CSV downloads and deletions are recorded by the server. Browser telemetry does not confirm that a download was saved to disk. Reading the history needs access to this Mac's Docker host; app users cannot see it. This adds attribution, not authorization or tamper resistance against host/database administrators.
 
 Each non-health HTTP request also emits a JSON container log with identity, method, path (without query), status, request ID and processing time. The same request ID links it to database history and the `X-Request-ID` response header. Health probes are omitted. Container log rotation retains the existing three 5 MiB files:
 

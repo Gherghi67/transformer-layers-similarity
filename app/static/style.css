@@ -879,11 +879,3 @@ footer a {
     padding: 10px;
   }
 }
-
-.identity-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin: 0 0 20px; font-size: 13px; }
-.identity-bar input { width: 180px; }
-.identity-bar [hidden] { display: none; }
-.activity-panel { padding: 24px; }
-.activity-row { display: grid; gap: 6px; border-top: 1px solid #d9dedc; padding: 16px 0; }
-.activity-row time { font-size: 12px; color: #526675; }
-.activity-detail { overflow-wrap: anywhere; font-size: 13px; }

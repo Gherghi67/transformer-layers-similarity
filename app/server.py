@@ -5,7 +5,6 @@ import argparse
 from contextlib import closing, contextmanager
 import csv
 from datetime import datetime, timezone
-from http.cookies import CookieError, SimpleCookie
 import logging
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -15,7 +14,7 @@ import math
 from pathlib import Path
 import re
 import sqlite3
-from urllib.parse import quote, unquote, urlsplit, parse_qs
+from urllib.parse import urlsplit
 import uuid
 
 LOGGER = logging.getLogger("layer_atlas")
@@ -140,14 +139,6 @@ class Handler(BaseHTTPRequestHandler):
             login = self.headers.get("Tailscale-User-Login", "").strip()
             if login and len(login) <= 320 and not any(ord(c) < 32 for c in login):
                 return {"actor": login, "identity_source": "tailscale"}
-        cookie = SimpleCookie()
-        try:
-            cookie.load(self.headers.get("Cookie", ""))
-            name = unquote(cookie["atlas_name"].value).strip() if "atlas_name" in cookie else ""
-        except (ValueError, KeyError, CookieError):
-            name = ""
-        if name and len(name) <= 80 and not any(ord(c) < 32 for c in name):
-            return {"actor": name, "identity_source": "self-reported"}
         return {"actor": "Unknown visitor", "identity_source": "unknown"}
 
     def record_activity(self, db, action, target, details):
@@ -182,8 +173,6 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", "no-store")
         self.send_header("X-Request-ID", self.request_id)
-        if getattr(self, "identity_cookie", None):
-            self.send_header("Set-Cookie", self.identity_cookie)
         self.send_header("X-Content-Type-Options", "nosniff")
         self.send_header("Referrer-Policy", "same-origin")
         self.send_header("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
@@ -240,22 +229,7 @@ class Handler(BaseHTTPRequestHandler):
             file_path = ROOT / ("examples" if filename == "example.json" else "static") / filename
             content_type = {".html": "text/html", ".js": "text/javascript", ".mjs": "text/javascript", ".css": "text/css", ".json": "application/json"}[file_path.suffix]
             return self.send_bytes(200, file_path.read_bytes(), content_type + "; charset=utf-8")
-        if path == "/api/me" and self.command == "GET":
-            return self.send_json(200, self.actor)
         with self.db_connection() as db:
-            if path == "/api/me" and self.command == "POST":
-                value = self.json_body()
-                name = value.get("name")
-                if not isinstance(name, str) or not name.strip() or len(name.strip()) > 80 or any(ord(c) < 32 for c in name):
-                    raise RequestError(400, "Use a name of 1–80 characters.")
-                self.identity_cookie = f"atlas_name={quote(name.strip(), safe='')}; Path=/; HttpOnly; SameSite=Strict; Max-Age=31536000"
-                if self.headers.get("Host", "").split(":")[0] not in ("localhost", "127.0.0.1"):
-                    self.identity_cookie += "; Secure"
-                if self.actor["identity_source"] != "tailscale":
-                    self.actor = {"actor": name.strip(), "identity_source": "self-reported"}
-                self.record_activity(db, "identity.set", "", {})
-                db.commit()
-                return self.send_json(200, self.actor)
             if path == "/api/activity" and self.command == "POST":
                 value = self.json_body()
                 if value.get("action") not in ("view.open", "maps.compare", "png.export", "demo.toggle"):
@@ -266,17 +240,6 @@ class Handler(BaseHTTPRequestHandler):
                 self.record_activity(db, value["action"], "browser", {**details, "browser_reported": True})
                 db.commit()
                 return self.send_json(201, {"ok": True})
-            if path == "/api/activity" and self.command == "GET":
-                try:
-                    before = int(parse_qs(urlsplit(self.path).query).get("before", [str(2**63 - 1)])[0])
-                    if not 0 < before <= 2**63 - 1:
-                        raise ValueError()
-                except ValueError:
-                    raise RequestError(400, "before must be a positive activity ID.")
-                rows = [dict(row) for row in db.execute("SELECT * FROM activity WHERE id < ? ORDER BY id DESC LIMIT 100", (before,))]
-                for event in rows:
-                    event["details"] = json.loads(event["details"])
-                return self.send_json(200, rows)
             if path == "/api/runs":
                 if self.command == "GET":
                     runs = [unpack(row) for row in db.execute("SELECT * FROM runs ORDER BY created_at DESC")]
@@ -399,6 +362,13 @@ def make_server(port=8786, db_path=None, allowed_hosts=(), bind="127.0.0.1", tru
     return server
 
 
+def print_activity(db_path, limit, output=None):
+    with closing(sqlite3.connect(Path(db_path).resolve().as_uri() + "?mode=ro", uri=True)) as db:
+        rows = db.execute("SELECT created_at, actor, identity_source, action, target, details, request_id FROM activity ORDER BY id DESC LIMIT ?", (limit,)).fetchall()
+    for created_at, actor, source, action, target, details, request_id in reversed(rows):
+        print(f"{created_at}  {actor} ({source})  {action}  {target}  {details}  {request_id}", file=output)
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--port", type=int, default=8786)
@@ -406,7 +376,13 @@ if __name__ == "__main__":
     parser.add_argument("--db", type=Path, default=ROOT / "data" / "layer-atlas.sqlite3")
     parser.add_argument("--allowed-host", action="append", default=[], help="Additional reverse-proxy hostname, without scheme or port")
     parser.add_argument("--trust-proxy-identity", action="store_true", help="Trust Tailscale identity headers; only behind the private Serve gateway")
+    parser.add_argument("--activity", type=int, metavar="N", help="Print the newest N activity entries, oldest first, and exit")
     args = parser.parse_args()
+    if args.activity is not None:
+        if args.activity < 1:
+            parser.error("--activity must be at least 1")
+        print_activity(args.db, args.activity)
+        raise SystemExit(0)
     logging.basicConfig(level=logging.INFO, format="%(message)s")
     server = make_server(args.port, args.db, args.allowed_host, args.bind, args.trust_proxy_identity)
     print(f"Layer Atlas serving at http://{args.bind}:{server.server_port}", flush=True)
